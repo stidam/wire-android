@@ -20,15 +20,19 @@ package com.waz.zclient.pages.main.drawing;
 import android.app.Activity;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
 import android.media.ExifInterface;
 import android.os.Bundle;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.TextView;
 import com.waz.api.ImageAsset;
@@ -39,6 +43,7 @@ import com.waz.zclient.OnBackPressedListener;
 import com.waz.zclient.R;
 import com.waz.zclient.controllers.accentcolor.AccentColorObserver;
 import com.waz.zclient.controllers.drawing.DrawingController;
+import com.waz.zclient.controllers.globallayout.KeyboardVisibilityObserver;
 import com.waz.zclient.pages.BaseFragment;
 import com.waz.zclient.ui.colorpicker.ColorPickerLayout;
 import com.waz.zclient.ui.colorpicker.ColorPickerScrollView;
@@ -46,6 +51,7 @@ import com.waz.zclient.ui.colorpicker.EmojiBottomSheetDialog;
 import com.waz.zclient.ui.colorpicker.EmojiSize;
 import com.waz.zclient.ui.sketch.DrawingCanvasView;
 import com.waz.zclient.ui.text.TypefaceTextView;
+import com.waz.zclient.ui.utils.KeyboardUtils;
 import com.waz.zclient.utils.LayoutSpec;
 import com.waz.zclient.utils.TrackingUtils;
 import com.waz.zclient.utils.ViewUtils;
@@ -59,12 +65,20 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
                                                                                         DrawingCanvasView.DrawingCanvasCallback,
                                                                                         ViewTreeObserver.OnScrollChangedListener,
                                                                                         AccentColorObserver,
-                                                                                        ColorPickerLayout.OnWidthChangedListener {
+                                                                                        ColorPickerLayout.OnWidthChangedListener,
+                                                                                        KeyboardVisibilityObserver {
 
     public static final String TAG = DrawingFragment.class.getName();
     private static final String SAVED_INSTANCE_BITMAP = "SAVED_INSTANCE_BITMAP";
     private static final String ARGUMENT_BACKGROUND_IMAGE = "ARGUMENT_BACKGROUND_IMAGE";
     private static final String ARGUMENT_DRAWING_DESTINATION = "ARGUMENT_DRAWING_DESTINATION";
+
+    private static final float TEXT_ALPHA_INVISIBLE = 0F;
+    private static final float TEXT_ALPHA_MOVE = 0.2F;
+    private static final float TEXT_ALPHA_VISIBLE = 1F;
+
+    private static final int textColorNoBackgroundImage = Color.BLACK;
+    private static final int textColorWithBackgroundImage = Color.WHITE;
 
     private ShakeEventListener shakeEventListener;
     private SensorManager sensorManager;
@@ -83,6 +97,7 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
     private TextView sendDrawingButton;
     private TextView cancelDrawingButton;
     private TextView undoSketchButton;
+    private EditText sketchEditTextView;
 
     private ImageAsset backgroundImage;
     private LoadHandle bitmapLoadHandle;
@@ -128,9 +143,7 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        drawingViewTip.setVisibility(View.GONE);
-                        drawingTipBackground.setVisibility(View.GONE);
-                        drawingCanvasView.setOnTouchListener(null);
+                        hideTip();
                         break;
                 }
                 return false;
@@ -167,11 +180,43 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
         undoSketchButton.setOnLongClickListener(sketchButtonsOnLongClickListener);
         undoSketchButton.setClickable(false);
 
+        sketchEditTextView = ViewUtils.getView(rootView, R.id.et__sketch_text);
+        sketchEditTextView.setAlpha(TEXT_ALPHA_INVISIBLE);
+        sketchEditTextView.setVisibility(View.INVISIBLE);
+        sketchEditTextView.setOnTouchListener(new View.OnTouchListener() {
+            private float initialX;
+            private float initialY;
+            private FrameLayout.LayoutParams params;
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (drawingCanvasView.isDrawText()) {
+                    switch (event.getAction()) {
+                        case MotionEvent.ACTION_DOWN:
+                            initialX = event.getX();
+                            initialY = event.getY();
+                            params = (FrameLayout.LayoutParams) sketchEditTextView.getLayoutParams();
+                            sketchEditTextView.setAlpha(TEXT_ALPHA_MOVE);
+                            break;
+                        case MotionEvent.ACTION_MOVE:
+                            params.leftMargin += (int) (event.getX() - initialX);
+                            params.topMargin += (int) (event.getY() - initialY);
+                            sketchEditTextView.setLayoutParams(params);
+                            break;
+                        case MotionEvent.ACTION_UP:
+                            closeKeyboard();
+                            break;
+                    }
+                }
+                return drawingCanvasView.onTouchEvent(event);
+            }
+        });
+
         if (savedInstanceState != null) {
             Bitmap savedBitmap = savedInstanceState.getParcelable(SAVED_INSTANCE_BITMAP);
             if (savedBitmap != null) {
                 // Use saved background image if exists
                 drawingCanvasView.setBackgroundBitmap(savedBitmap);
+                sketchEditTextView.setTextColor(textColorWithBackgroundImage);
             } else {
                 setBackgroundBitmap();
             }
@@ -182,6 +227,16 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
         return rootView;
     }
 
+    private void hideTip() {
+        if (drawingViewTip.getVisibility() == View.GONE) {
+            return;
+        }
+        drawingViewTip.setVisibility(View.GONE);
+        drawingTipBackground.setVisibility(View.GONE);
+        drawingCanvasView.setOnTouchListener(null);
+    }
+
+
     @Override
     public void onSaveInstanceState(Bundle outState) {
         outState.putParcelable(SAVED_INSTANCE_BITMAP, getBitmapDrawing());
@@ -190,11 +245,13 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
 
     public void setBackgroundBitmap() {
         if (getActivity() == null || backgroundImage == null) {
+            sketchEditTextView.setTextColor(textColorNoBackgroundImage);
             return;
         }
         drawingViewTip.setText(getResources().getString(R.string.drawing__tip__picture__message));
         drawingTipBackground.setVisibility(View.VISIBLE);
         drawingViewTip.setTextColor(getResources().getColor(R.color.drawing__tip__font__color_image));
+        sketchEditTextView.setTextColor(textColorWithBackgroundImage);
         cancelLoadHandle();
         bitmapLoadHandle = backgroundImage.getSingleBitmap(ViewUtils.getOrientationDependentDisplayWidth(getActivity()), new ImageAsset.BitmapCallback() {
             @Override
@@ -235,6 +292,7 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
         sensorManager.registerListener(shakeEventListener,
                 sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER),
                 SensorManager.SENSOR_DELAY_NORMAL);
+        getControllerFactory().getGlobalLayoutController().addKeyboardVisibilityObserver(this);
     }
 
     @Override
@@ -247,6 +305,7 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
 
     @Override
     public void onStop() {
+        getControllerFactory().getGlobalLayoutController().removeKeyboardVisibilityObserver(this);
         getStoreFactory().getInAppNotificationStore().setUserSendingPicture(false);
         sensorManager.unregisterListener(shakeEventListener);
         super.onStop();
@@ -278,6 +337,10 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
 
     @Override
     public boolean onBackPressed() {
+        if (isShowingKeyboard()) {
+            closeKeyboard();
+            return true;
+        }
         if (drawingCanvasView != null && drawingCanvasView.undo()) {
             return true;
         }
@@ -390,11 +453,16 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
         }
         drawingCanvasView.setDrawingColor(color);
         drawingCanvasView.setStrokeSize(strokeSize);
+        if (isShowingKeyboard()) {
+            closeKeyboard();
+        }
+        sketchEditTextView.setVisibility(View.INVISIBLE);
     }
 
     @Override
     public void onEmojiSelected(String emoji, int size) {
         drawingCanvasView.setEmoji(emoji, size);
+        sketchEditTextView.setVisibility(View.INVISIBLE);
     }
 
     @Override
@@ -414,8 +482,51 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
         dialog.show();
     }
 
+    private void closeKeyboard() {
+        sketchEditTextView.setCursorVisible(false);
+        sketchEditTextView.setDrawingCacheEnabled(true);
+        Bitmap bitmapDrawingCache = sketchEditTextView.getDrawingCache();
+        if (bitmapDrawingCache != null) {
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) sketchEditTextView.getLayoutParams();
+            drawingCanvasView.drawTextBitmap(bitmapDrawingCache.copy(bitmapDrawingCache.getConfig(), true), params.leftMargin, params.topMargin);
+        } else {
+            drawingCanvasView.drawTextBitmap(null, 0, 0);
+        }
+        sketchEditTextView.setDrawingCacheEnabled(false);
+        KeyboardUtils.hideKeyboard(getActivity());
+        sketchEditTextView.setAlpha(TEXT_ALPHA_INVISIBLE);
+    }
+
+    private void showKeyboard() {
+        drawingCanvasView.drawTextBitmap(null, 0, 0);
+        sketchEditTextView.setAlpha(TEXT_ALPHA_VISIBLE);
+        sketchEditTextView.setCursorVisible(true);
+        sketchEditTextView.requestFocus();
+        KeyboardUtils.showKeyboard(getActivity());
+    }
+
+    private boolean isShowingKeyboard() {
+        return Float.compare(sketchEditTextView.getAlpha(), TEXT_ALPHA_VISIBLE) == 0 && KeyboardUtils.isKeyboardVisible(getContext());
+    }
+
+    @Override
+    public void onTextClick() {
+        drawingCanvasView.setDrawText(true);
+        if (isShowingKeyboard()) {
+            closeKeyboard();
+        } else {
+            sketchEditTextView.setVisibility(View.VISIBLE);
+            showKeyboard();
+            hideTip();
+        }
+
+    }
+
     @Override
     public void drawingAdded() {
+        if (isShowingKeyboard()) {
+            closeKeyboard();
+        }
         undoSketchButton.setTextColor(getResources().getColor(R.color.drawing__icon__enabled_color));
         undoSketchButton.setClickable(true);
         sendDrawingButton.setTextColor(getResources().getColor(R.color.drawing__icon__enabled_color));
@@ -433,6 +544,31 @@ public class DrawingFragment extends BaseFragment<DrawingFragment.Container> imp
     @Override
     public void reserveBitmapMemory(int width, int height) {
         MemoryImageCache.reserveImageMemory(width, height);
+    }
+
+    @Override
+    public void onScaleChanged(float scale) {
+        float mediumTextSize = getResources().getDimensionPixelSize(com.waz.zclient.ui.R.dimen.wire__text_size__medium);
+        float newSize = mediumTextSize * scale;
+        sketchEditTextView.setTextSize(TypedValue.COMPLEX_UNIT_PX, newSize);
+    }
+
+    @Override
+    public void onScaleStart() {
+        drawingCanvasView.drawTextBitmap(null, 0, 0);
+        sketchEditTextView.setAlpha(TEXT_ALPHA_VISIBLE);
+    }
+
+    @Override
+    public void onScaleEnd() {
+        closeKeyboard();
+    }
+
+    @Override
+    public void onKeyboardVisibilityChanged(boolean keyboardIsVisible, int keyboardHeight, View currentFocus) {
+        if (!keyboardIsVisible) {
+            closeKeyboard();
+        }
     }
 
     public interface Container { }

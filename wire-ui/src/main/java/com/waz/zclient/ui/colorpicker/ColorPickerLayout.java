@@ -23,6 +23,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.LinearLayout;
 import com.waz.zclient.ui.R;
+import timber.log.Timber;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +39,7 @@ public class ColorPickerLayout extends LinearLayout {
 
     private List<ColorPickerView> colorDotViews = new ArrayList<>();
     private ColorPickerEmojiView emojiView;
+    private ColorPickerKeyboardGlyphTextView keyboardView;
 
     private OnColorSelectedListener onColorSelectedListener;
     private OnWidthChangedListener onWidthChangedListener;
@@ -60,6 +62,14 @@ public class ColorPickerLayout extends LinearLayout {
 
     private void init() {
         currentEmoji = DEFAULT_EMOJI;
+        keyboardView = new ColorPickerKeyboardGlyphTextView(getContext());
+        keyboardView.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onColorSelectedListener.onTextClick();
+                setCurrentColor(keyboardView);
+            }
+        });
         emojiView = (ColorPickerEmojiView) LayoutInflater.from(getContext()).inflate(R.layout.color_picker_emoji_view, this, false);
         emojiView.setOnClickListener(new OnClickListener() {
             @Override
@@ -69,6 +79,7 @@ public class ColorPickerLayout extends LinearLayout {
         });
         int[] colors = getResources().getIntArray(R.array.accents_color);
         setAccentColors(colors, colors[0]);
+
         invalidate();
     }
 
@@ -90,6 +101,14 @@ public class ColorPickerLayout extends LinearLayout {
         int width = getResources().getDimensionPixelSize(R.dimen.wire__divider__height__thin);
         int height = getResources().getDimensionPixelSize(R.dimen.color_picker_divider_height);
         LayoutParams params = new LayoutParams(width, height);
+        addView(divider, params);
+
+        LayoutParams keyboardLayoutParams = new LayoutParams(getResources().getDimensionPixelSize(R.dimen.color_picker_emoji_dot_width), getResources().getDimensionPixelSize(R.dimen.color_picker_emoji_dot_height));
+        addView(keyboardView, keyboardLayoutParams);
+        colorDotViews.add(keyboardView);
+
+        divider = new View(getContext());
+        divider.setBackgroundColor(getResources().getColor(R.color.light_graphite_40));
         addView(divider, params);
 
         LayoutInflater layoutInflater = LayoutInflater.from(getContext());
@@ -137,10 +156,14 @@ public class ColorPickerLayout extends LinearLayout {
                     currentDotRadius = colorPickerView.getSize();
                     ColorPickerDotView colorPickerDotView = (ColorPickerDotView) colorPickerView;
                     onColorSelectedListener.onColorSelected(colorPickerDotView.getCircleColor(), colorPickerDotView.getStrokeSize());
-                } else {
+                } else if (view instanceof ColorPickerEmojiView) {
                     colorPickerView.setSelected(currentEmojiSize.ordinal());
                     ColorPickerEmojiView colorPickerEmojiView = (ColorPickerEmojiView) colorPickerView;
                     onColorSelectedListener.onEmojiSelected(colorPickerEmojiView.getEmoji(), colorPickerEmojiView.getEmojiSize());
+                } else if (view instanceof ColorPickerKeyboardGlyphTextView) {
+                    colorPickerView.setSelected(0);
+                } else {
+                    Timber.e("asdf feck");
                 }
             }
         }
@@ -171,6 +194,7 @@ public class ColorPickerLayout extends LinearLayout {
         void onColorSelected(int color, int strokeSize);
         void onEmojiSelected(String emoji, int size);
         void onMoreClick();
+        void onTextClick();
     }
 
     public interface OnWidthChangedListener {

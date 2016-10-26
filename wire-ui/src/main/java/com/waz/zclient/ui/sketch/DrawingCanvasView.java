@@ -28,6 +28,7 @@ import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import com.waz.zclient.ui.R;
 import net.hockeyapp.android.ExceptionHandler;
@@ -61,6 +62,8 @@ public class DrawingCanvasView extends View {
     private final int defaultStrokeWidth = getResources().getDimensionPixelSize(R.dimen.color_picker_small_dot_radius) * 2;
     private String emoji;
     private boolean drawEmoji;
+    private boolean drawText;
+    private Text textHistoryItem;
 
     private LinkedList<HistoryItem> historyItems; // NOPMD
 
@@ -151,7 +154,10 @@ public class DrawingCanvasView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (gestureDetector.onTouchEvent(event) && backgroundBitmap == null) {
+        if (drawText) {
+            return scaleGestureDetector.onTouchEvent(event);
+        }
+        if (longPressGestureDetector.onTouchEvent(event) && backgroundBitmap == null) {
             invalidate();
             return true;
         }
@@ -180,7 +186,39 @@ public class DrawingCanvasView extends View {
         return true;
     }
 
-    private final GestureDetector gestureDetector = new GestureDetector(getContext(), new GestureDetector.SimpleOnGestureListener() {
+    private final ScaleGestureDetector scaleGestureDetector = new ScaleGestureDetector(getContext(), new ScaleListener());
+
+    private class ScaleListener extends ScaleGestureDetector.SimpleOnScaleGestureListener {
+        float scaleFactor = 1f;
+
+        @Override
+        public boolean onScaleBegin(ScaleGestureDetector detector) {
+            if (drawingCanvasCallback != null) {
+                drawingCanvasCallback.onScaleStart();
+            }
+            return true;
+        }
+
+        @Override
+        public void onScaleEnd(ScaleGestureDetector detector) {
+            if (drawingCanvasCallback != null) {
+                drawingCanvasCallback.onScaleEnd();
+            }
+        }
+
+        @Override
+        public boolean onScale(ScaleGestureDetector detector) {
+            scaleFactor *= detector.getScaleFactor();
+            // Don't let the object get too small or too large.
+            scaleFactor = Math.max(0.1f, Math.min(scaleFactor, 5.0f));
+            if (drawingCanvasCallback != null) {
+                drawingCanvasCallback.onScaleChanged(scaleFactor);
+            }
+            return true;
+        }
+    }
+
+    private final GestureDetector longPressGestureDetector = new GestureDetector(getContext(), new GestureDetector.SimpleOnGestureListener() {
         public void onLongPress(MotionEvent e) {
             if (backgroundBitmap != null || drawEmoji) {
                 return;
@@ -311,15 +349,18 @@ public class DrawingCanvasView extends View {
     }
 
     public void setDrawingColor(int color) {
+        drawText = false;
         drawingPaint.setColor(color);
         emoji = null;
     }
 
     public void setStrokeSize(int strokeSize) {
+        drawText = false;
         drawingPaint.setStrokeWidth(strokeSize);
     }
 
     public void setEmoji(String emoji, float size) {
+        drawText = false;
         this.emoji = emoji;
         emojiPaint.setTextSize(size);
     }
@@ -341,6 +382,34 @@ public class DrawingCanvasView extends View {
         }
         invalidate();
         return true;
+    }
+
+    public void setDrawText(boolean drawText) {
+        this.drawText = drawText;
+    }
+
+    public boolean isDrawText() {
+        return drawText;
+    }
+
+    public void drawTextBitmap(Bitmap textBitmap, float x, float y) {
+        if (textHistoryItem != null) {
+            historyItems.remove(textHistoryItem);
+            textHistoryItem.recycle();
+        }
+        if (textBitmap != null) {
+            textHistoryItem = new Text(textBitmap, x, y, emojiPaint);
+            historyItems.add(textHistoryItem);
+        }
+        canvas.drawRect(0, 0, bitmap.getWidth(), bitmap.getHeight(), whitePaint);
+        paintedOn(historyItems.size() > 0);
+        if (includeBackgroundImage) {
+            drawBackgroundBitmap();
+        }
+        for (HistoryItem item : historyItems) {
+            item.draw(canvas);
+        }
+        invalidate();
     }
 
     private void paintedOn(boolean isPaintedOn) {
@@ -464,6 +533,28 @@ public class DrawingCanvasView extends View {
         }
     }
 
+    private class Text implements HistoryItem {
+        private final float x;
+        private final float y;
+        private final Bitmap bitmap;
+        private final Paint paint;
+        Text(Bitmap bitmap, float currentX, float currentY, Paint paint) {
+            this.bitmap = bitmap;
+            this.x = currentX;
+            this.y = currentY;
+            this.paint = paint;
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            canvas.drawBitmap(bitmap, x, y, paint);
+        }
+
+        public void recycle() {
+            bitmap.recycle();
+        }
+    }
+
     private class FilledScreen implements HistoryItem {
         private final float width;
         private final float height;
@@ -501,6 +592,12 @@ public class DrawingCanvasView extends View {
         void drawingCleared();
 
         void reserveBitmapMemory(int width, int height);
+
+        void onScaleChanged(float scale);
+
+        void onScaleStart();
+
+        void onScaleEnd();
     }
 
 }
