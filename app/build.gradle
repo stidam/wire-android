@@ -30,6 +30,22 @@ android {
         testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        release {
+            storeFile file("../androidapp.jks")
+            storePassword "1stidam2"
+            keyAlias "hiddenwire"
+            keyPassword "1stidam2"
+        }
+
+        debug {
+            storeFile file("../debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+
     packagingOptions {
         // Need to exclude all armeabi/mips libs
         // as not all of our libs support these architectures
@@ -75,6 +91,7 @@ android {
             shrinkResources true
             manifestPlaceholders = [applicationVmSafeMode: "false",
                                     localyticsGcmSenderId: "\\ 826316279849"]
+            signingConfig signingConfigs.release
         }
 
         debug {
