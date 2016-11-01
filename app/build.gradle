@@ -167,7 +167,7 @@ android {
             applicationId "com.wire"
             manifestPlaceholders = [applicationLabel       : "@string/app_name",
                                     allowBackup            : "false",
-                                    applicationIcon        : "@drawable/ic_launcher_wire",
+                                    applicationIcon        : "@drawable/ic_launcher_custom",
                                     sharedUserId           : "com.waz.userid",
                                     internal_features      : "false",
                                     use_audio_link         : "false",
